@@ -41,7 +41,8 @@ function initDatabase() {
       correct_answer TEXT NOT NULL,
       explanation TEXT,
       image_url TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(category, question_text)  -- Prevent duplicates
     )`);
 
     // quiz_participants: THÊM UNIQUE(quiz_id, user_id)

@@ -3,6 +3,7 @@ const {
   createQuiz,
   startQuiz,
   stopQuiz,
+  joinQuiz, // Thêm import joinQuiz
 } = require("../../services/quizManager");
 const config = require("../../../config.json");
 
@@ -64,6 +65,20 @@ module.exports = {
     )
     .addSubcommand((subcommand) =>
       subcommand.setName("stop").setDescription("Dừng quiz đang chạy")
+    )
+    .addSubcommand(
+      (
+        subcommand // THÊM JOIN SUBCOMMAND
+      ) =>
+        subcommand
+          .setName("join")
+          .setDescription("Tham gia quiz đang chạy")
+          .addStringOption((option) =>
+            option
+              .setName("quiz_id")
+              .setDescription("ID quiz cần join (từ /create)")
+              .setRequired(true)
+          )
     ),
   async execute(interaction) {
     const subcommand = interaction.options.getSubcommand(true);
@@ -124,6 +139,13 @@ module.exports = {
         }
 
         await stopQuiz(interaction);
+        return;
+      }
+
+      if (subcommand === "join") {
+        // THÊM HANDLE JOIN
+        const quizId = interaction.options.getString("quiz_id");
+        await joinQuiz(interaction, quizId);
         return;
       }
 

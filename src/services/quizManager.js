@@ -201,25 +201,57 @@ async function startQuestionRound(quizId, questionNumber, channel, quiz) {
       [quizId]
     );
     const participantIds = participants.map((p) => p.user_id);
+    console.log(
+      `🔍 Debug: Participants IDs: [${participantIds.join(", ")}] | Total: ${
+        participantIds.length
+      }`
+    );
     const usedIds = await dbAll(
       "SELECT question_id FROM used_questions WHERE quiz_id = ?",
       [quizId]
+    );
+    console.log(
+      `🔍 Debug: Used IDs for Q${questionNumber}: [${usedIds
+        .map((u) => u.question_id)
+        .join(", ")}]`
     );
     const usedClause =
       usedIds.length > 0
         ? `AND id NOT IN (${usedIds.map(() => "?").join(",")})`
         : "";
     const params = [quiz.category, ...usedIds.map((u) => u.question_id)];
+    console.log(
+      `🔍 Debug: Query params: category='${quiz.category}', usedClause='${usedClause}', total params=${params.length}`
+    ); // THÊM log
     const question = await dbQuery(
       `SELECT * FROM questions WHERE category = ? ${usedClause} ORDER BY RANDOM() LIMIT 1`,
       params
     );
-    if (!question) return channel.send("❌ Không còn câu hỏi! Quiz dừng.");
+    if (!question) {
+      console.error(
+        `❌ No question for Q${questionNumber}: Available questions count?`
+      ); // THÊM log
+      // Query count để debug
+      const availCount = await dbQuery(
+        "SELECT COUNT(*) as count FROM questions WHERE category = ?",
+        [quiz.category]
+      );
+      console.log(
+        `🔍 Debug: Available questions in category: ${availCount.count}`
+      );
+      return channel.send("❌ Không còn câu hỏi! Quiz dừng.");
+    }
 
     await dbRun(
       "INSERT OR IGNORE INTO used_questions (quiz_id, question_id) VALUES (?, ?)",
       [quizId, question.id]
     );
+    console.log(
+      `✅ Selected Q${question.id}: ${question.question_text.substring(
+        0,
+        50
+      )}...`
+    ); // THÊM log
 
     const embed = new EmbedBuilder()
       .setTitle(`Câu ${questionNumber}/${quiz.questions_count}`)
@@ -238,26 +270,49 @@ async function startQuestionRound(quizId, questionNumber, channel, quiz) {
     if (question.image_url) embed.setImage(question.image_url);
 
     const message = await channel.send({ embeds: [embed] });
-    await Promise.all([
+    const reactions = await Promise.all([
       message.react("🇦"),
       message.react("🇧"),
       message.react("🇨"),
       message.react("🇩"),
     ]);
+    reactions.forEach((r, i) => {
+      if (r) console.log(`✅ Added reaction ${i + 1}: ${r.emoji.name}`);
+      else console.log(`❌ Failed to add reaction ${i + 1}`);
+    });
 
     const startTime = Date.now();
     const answers = [];
     const answeredUsers = new Set();
 
     const collector = message.createReactionCollector({
-      filter: (reaction, user) =>
-        ["🇦", "🇧", "🇨", "🇩"].includes(reaction.emoji.name) &&
-        !user.bot &&
-        !answeredUsers.has(user.id),
+      filter: (reaction, user) => {
+        const passes =
+          ["🇦", "🇧", "🇨", "🇩"].includes(reaction.emoji.name) &&
+          !user.bot &&
+          !answeredUsers.has(user.id);
+        console.log(
+          `🔍 Filter check: Emoji=${reaction.emoji.name}, User=${
+            user.id
+          } (bot? ${user.bot}), Answered? ${answeredUsers.has(
+            user.id
+          )} → Pass: ${passes}`
+        );
+        return passes;
+      },
       time: quiz.time_per_question * 1000,
     });
 
+    collector.on("ignore", (reaction, user) => {
+      console.log(
+        `🚫 Ignored reaction: Emoji=${reaction.emoji.name}, User=${user.id} (reason: filter fail)`
+      );
+    });
+
     collector.on("collect", async (reaction, user) => {
+      console.log(
+        `🔥 Debug: Reaction COLLECTED! User: ${user.id} (${user.username}), Emoji: ${reaction.emoji.name}`
+      );
       const letter = emojiToLetter[reaction.emoji.name];
       if (!letter) return;
       answeredUsers.add(user.id);
@@ -272,8 +327,10 @@ async function startQuestionRound(quizId, questionNumber, channel, quiz) {
         answer: letter,
         time_taken: timeTaken,
       });
+      console.log(
+        `✅ Debug: Answer pushed to array - Length now: ${answers.length}`
+      );
 
-      // Remove reactions
       try {
         await reaction.users.remove(user.id);
         for (const [emojiName] of Object.entries(emojiToLetter)) {
@@ -284,6 +341,7 @@ async function startQuestionRound(quizId, questionNumber, channel, quiz) {
             if (otherReaction) await otherReaction.users.remove(user.id);
           }
         }
+        console.log(`🗑️ Removed reactions for ${user.id}`);
       } catch (removeErr) {
         console.error(`Failed to remove reaction for ${user.id}:`, removeErr);
       }
@@ -295,6 +353,12 @@ async function startQuestionRound(quizId, questionNumber, channel, quiz) {
         answer: letter,
         time_taken: timeTaken,
       });
+    });
+
+    collector.on("end", (collected, reason) => {
+      console.log(
+        `🔚 Debug: Collector ended - Reason: ${reason}, Collected size: ${collected.size}, Answers length: ${answers.length}`
+      );
     });
 
     let timeLeft = quiz.time_per_question;
@@ -311,6 +375,7 @@ async function startQuestionRound(quizId, questionNumber, channel, quiz) {
     }, 1000);
 
     collector.on("end", async (collected, reason) => {
+      console.log(`Collector ended: ${reason}, collected: ${collected.size}`);
       clearInterval(timerInterval);
       try {
         await calculateScores(
@@ -319,8 +384,7 @@ async function startQuestionRound(quizId, questionNumber, channel, quiz) {
           questionNumber,
           question.correct_answer,
           answers,
-          quiz.time_per_question,
-          participantIds
+          quiz.time_per_question
         );
         await showQuestionResults(
           channel,
@@ -353,31 +417,50 @@ async function calculateScores(
   questionNumber,
   correctAnswer,
   answers,
-  timeLimit,
-  participantIds
+  timeLimit
 ) {
+  if (answers.length === 0) {
+    console.log(`⚠️ No answers for Q${questionNumber} - Skipping scores`);
+    return;
+  }
   const multiplier = 1.0;
+  const participants = await dbAll(
+    "SELECT user_id FROM quiz_participants WHERE quiz_id = ?",
+    [quizId]
+  );
+  const participantIds = participants.map((p) => p.user_id);
+  console.log(
+    `🔍 Debug: Fresh participants for scores: [${participantIds.join(
+      ", "
+    )}] | Total: ${participantIds.length}`
+  );
+
   for (const ans of answers) {
-    if (!participantIds.includes(ans.user_id)) continue;
     try {
-      // Auto-join nếu chưa tham gia (fix bug: user answer nhưng chưa join)
       if (!participantIds.includes(ans.user_id)) {
-        console.log(
-          `🔍 Debug: Auto-joining user ${ans.user_id} (${ans.username}) to participants`
-        );
+        console.log(`🔍 Debug: Auto-joining ${ans.user_id} (${ans.username})`);
         await dbRun(
           `INSERT OR IGNORE INTO quiz_participants (quiz_id, user_id, username, total_score, correct_answers) VALUES (?, ?, ?, 0, 0)`,
           [quizId, ans.user_id, ans.username]
         );
-        participantIds.push(ans.user_id); // Update local list để sau không skip
+        participantIds.push(ans.user_id);
       }
+
       let points = 0,
         isCorrect = 0;
-      if (ans.answer === correctAnswer) {
+      if (ans.answer.toUpperCase() === correctAnswer.toUpperCase()) {
         const timeBonus = Math.max(0, (timeLimit - ans.time_taken) / timeLimit);
         points = Math.floor(100 * (0.5 + 0.5 * timeBonus) * multiplier);
         isCorrect = 1;
+        console.log(
+          `✅ Correct! User ${ans.user_id} gets ${points} points (time: ${ans.time_taken}s)`
+        );
+      } else {
+        console.log(
+          `❌ Wrong! User ${ans.user_id} answer ${ans.answer} vs correct ${correctAnswer}`
+        );
       }
+
       await dbRun(
         `INSERT INTO quiz_answers (quiz_id, question_id, question_number, user_id, answer, is_correct, time_taken, points_earned) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
@@ -396,12 +479,25 @@ async function calculateScores(
         "SELECT total_score, correct_answers FROM quiz_participants WHERE quiz_id = ? AND user_id = ?",
         [quizId, ans.user_id]
       );
-      const newScore = (existing?.total_score || 0) + points;
-      const newCorrect = (existing?.correct_answers || 0) + isCorrect;
-      await dbRun(
-        `INSERT OR REPLACE INTO quiz_participants (quiz_id, user_id, username, total_score, correct_answers) VALUES (?, ?, ?, ?, ?)`,
-        [quizId, ans.user_id, ans.username, newScore, newCorrect]
-      );
+      if (existing) {
+        const newScore = existing.total_score + points;
+        const newCorrect = existing.correct_answers + isCorrect;
+        await dbRun(
+          `UPDATE quiz_participants SET total_score = ?, correct_answers = ?, username = ? WHERE quiz_id = ? AND user_id = ?`,
+          [newScore, newCorrect, ans.username, quizId, ans.user_id]
+        );
+        console.log(
+          `🔍 Debug: UPDATED score for ${ans.user_id}: ${newScore} total, ${newCorrect} correct`
+        );
+      } else {
+        await dbRun(
+          `INSERT INTO quiz_participants (quiz_id, user_id, username, total_score, correct_answers) VALUES (?, ?, ?, ?, ?)`,
+          [quizId, ans.user_id, ans.username, points, isCorrect]
+        );
+        console.log(
+          `🔍 Debug: INSERTED score for ${ans.user_id}: ${points} points, ${isCorrect} correct`
+        );
+      }
 
       logScore({
         quiz_id: quizId,
@@ -414,6 +510,9 @@ async function calculateScores(
       console.error("Answer insert error:", ansErr);
     }
   }
+  console.log(
+    `📊 Scores calculated for Q${questionNumber}: ${answers.length} answers processed`
+  );
 }
 
 async function showQuestionResults(
@@ -524,7 +623,7 @@ async function endQuiz(quizId, channel, quiz) {
         'UPDATE quizzes SET status = "finished", finished_at = CURRENT_TIMESTAMP WHERE id = ?',
         [quizId]
       );
-      return; // Exit sớm nếu rỗng
+      return;
     }
 
     const totalParticipants = (
@@ -559,13 +658,11 @@ async function endQuiz(quizId, channel, quiz) {
             totalParticipants
           : 0,
       avg_correct_rate: avgCorrect,
-      top_3: finalScores
-        .slice(0, 3)
-        .map((s) => ({
-          user_id: s.user_id,
-          username: s.username,
-          score: s.total_score,
-        })),
+      top_3: finalScores.slice(0, 3).map((s) => ({
+        user_id: s.user_id,
+        username: s.username,
+        score: s.total_score,
+      })),
       duration_seconds: (new Date() - new Date(quiz.started_at)) / 1000,
     });
 
@@ -586,7 +683,6 @@ async function endQuiz(quizId, channel, quiz) {
       });
     });
 
-    // Award prizes (giữ nguyên)
     if (finalScores[0]) {
       const top1Member = channel.guild.members.cache.get(
         finalScores[0].user_id
@@ -675,6 +771,7 @@ async function joinQuiz(interaction, quizId) {
       `INSERT OR IGNORE INTO quiz_participants (quiz_id, user_id, username, total_score, correct_answers) VALUES (?, ?, ?, 0, 0)`,
       [quizId, interaction.user.id, interaction.user.username]
     );
+    console.log(`✅ Join logged: User ${interaction.user.id} joined ${quizId}`);
     await interaction.user.send("✅ Bạn đã tham gia quiz!");
     interaction.reply({ content: "✅ Đã tham gia!", ephemeral: true });
   } catch (err) {
