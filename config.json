@@ -35,8 +35,7 @@
     "maps": "Bản đồ",
     "gameplay": "Lối chơi",
     "items": "Vật phẩm",
-    "history": "Lịch sử game",
-    "mixed": "Tổng hợp"
+    "history": "Lịch sử game"
   },
   "logging": {
     "level": "INFO",

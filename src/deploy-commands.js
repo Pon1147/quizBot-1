@@ -20,7 +20,6 @@ const commands = [
               { name: "Lối chơi", value: "gameplay" },
               { name: "Vật phẩm", value: "items" },
               { name: "Lịch sử game", value: "history" },
-              { name: "Tổng hợp", value: "mixed" }
             )
         )
         .addIntegerOption((option) =>

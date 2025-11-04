@@ -21,7 +21,6 @@ module.exports = {
               { name: config.categories.gameplay, value: "gameplay" },
               { name: config.categories.items, value: "items" },
               { name: config.categories.history, value: "history" },
-              { name: config.categories.mixed, value: "mixed" }
             )
         )
         .addIntegerOption((option) =>
