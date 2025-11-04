@@ -9,6 +9,7 @@ const {
 } = require("../utils/logger");
 const config = require("../../config.json");
 const crypto = require("crypto");
+const { Op } = require("sequelize"); // Fix: Import Op
 
 const { validateCategory, validateQuizParams } = require("./quizValidator");
 const {
@@ -54,7 +55,10 @@ async function createQuiz(
     ));
 
     const activeQuiz = await db.Quiz.findOne({
-      where: { server_id: serverId, status: ["starting", "running"] },
+      where: {
+        server_id: serverId,
+        status: { [Op.in]: ["starting", "running"] },
+      }, // Use Op.in for array
     });
     if (activeQuiz)
       return interaction.editReply(
@@ -168,20 +172,29 @@ async function startQuestionRound(quizId, questionNumber, channel, quiz) {
     );
 
     const whereClause =
-      usedIds.length > 0 ? { id: { [db.sequelize.Op.notIn]: usedIds } } : {};
+      usedIds.length > 0 ? { id: { [Op.notIn]: usedIds } } : {}; // Fix: Use imported Op
     const question = await db.Question.findOne({
       where: { ...whereClause, category: quiz.category },
       order: db.sequelize.literal("RANDOM()"),
     });
     if (!question) {
       console.error(
-        `❌ No question for Q${questionNumber}: Available questions count?`
+        `❌ No question for Q${questionNumber} in category "${quiz.category}"`
       );
       const availCount = await db.Question.count({
         where: { category: quiz.category },
       });
-      console.log(`🔍 Debug: Available questions in category: ${availCount}`);
-      return channel.send("❌ Không còn câu hỏi! Quiz dừng.");
+      console.log(
+        `🔍 Available questions in "${quiz.category}": ${availCount}`
+      );
+      console.log(
+        `💡 Suggestion: Run "npm run load-data" và check category match in config.categories.`
+      );
+      return channel.send(
+        `❌ Không còn câu hỏi cho category "${
+          config.categories[quiz.category]
+        }"! Quiz dừng. (Admin: Load data lại.)`
+      );
     }
 
     await db.UsedQuestion.create({ quiz_id: quizId, question_id: question.id });
@@ -196,7 +209,7 @@ async function startQuestionRound(quizId, questionNumber, channel, quiz) {
     const message = await channel.send({ embeds: [embed] });
     await addReactions(message);
 
-    const { collector } = createCollector(
+    const { collector, answers } = createCollector(
       message,
       quiz.time_per_question,
       quizId,
@@ -229,14 +242,14 @@ async function startQuestionRound(quizId, questionNumber, channel, quiz) {
           question.id,
           questionNumber,
           question.correct_answer,
-          collector.answers || [], // Giả sử collector expose answers
+          answers,
           quiz.time_per_question,
           db
         );
         const resultsEmbed = showQuestionResultsEmbed(
           questionNumber,
           question.dataValues,
-          collector.answers || [],
+          answers,
           quiz.time_per_question
         );
         await channel.send({ embeds: [resultsEmbed] });
@@ -269,7 +282,7 @@ async function endQuiz(quizId, channel, quiz) {
       channel.send(
         "Cảm ơn các bạn đã tham gia! 🎉 Hẹn gặp lại ở quiz tiếp theo! 🏁"
       );
-      await dbRun(
+      await db.dbRun(
         'UPDATE quizzes SET status = "finished", finished_at = CURRENT_TIMESTAMP WHERE id = ?',
         [quizId]
       );
@@ -343,7 +356,7 @@ async function endQuiz(quizId, channel, quiz) {
     channel.send(
       "Cảm ơn các bạn đã tham gia! 🎉 Hẹn gặp lại ở quiz tiếp theo! 🏁"
     );
-    await dbRun(
+    await db.dbRun(
       'UPDATE quizzes SET status = "finished", finished_at = CURRENT_TIMESTAMP WHERE id = ?',
       [quizId]
     );
@@ -356,14 +369,14 @@ async function endQuiz(quizId, channel, quiz) {
 async function stopQuiz(interaction) {
   try {
     const serverId = interaction.guild.id;
-    const activeQuiz = await dbQuery(
+    const activeQuiz = await db.dbQuery(
       'SELECT id, channel_id FROM quizzes WHERE server_id = ? AND status IN ("starting", "running")',
       [serverId]
     );
     if (!activeQuiz)
       return interaction.editReply("❌ Không có quiz đang chạy!");
 
-    await dbRun(
+    await db.dbRun(
       'UPDATE quizzes SET status = "stopped", finished_at = CURRENT_TIMESTAMP WHERE id = ?',
       [activeQuiz.id]
     );
@@ -382,15 +395,19 @@ async function stopQuiz(interaction) {
 
 async function joinQuiz(interaction, quizId) {
   try {
-    const quiz = await dbQuery(
+    const quiz = await db.dbQuery(
       'SELECT * FROM quizzes WHERE id = ? AND status = "running"',
       [quizId]
     );
     if (!quiz) return interaction.reply("❌ Không có quiz đang chạy!");
-    await dbRun(
-      `INSERT OR IGNORE INTO quiz_participants (quiz_id, user_id, username, total_score, correct_answers) VALUES (?, ?, ?, 0, 0)`,
-      [quizId, interaction.user.id, interaction.user.username]
-    );
+    await db.QuizParticipant.upsert({
+      // Fix: Use model upsert for FK safe
+      quiz_id: quizId,
+      user_id: interaction.user.id,
+      username: interaction.user.username,
+      total_score: 0,
+      correct_answers: 0,
+    });
     console.log(`✅ Join logged: User ${interaction.user.id} joined ${quizId}`);
     await interaction.user.send("✅ Bạn đã tham gia quiz!");
     interaction.reply({ content: "✅ Đã tham gia!", ephemeral: true });

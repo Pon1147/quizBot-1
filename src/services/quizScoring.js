@@ -1,6 +1,5 @@
-const { dbRun, dbAll, dbQuery } = require("../utils/database");
+const { Op } = require("sequelize");
 const { logScore } = require("../utils/logger");
-const config = require("../../config.json");
 
 module.exports = {
   calculateScores: async (
@@ -17,10 +16,10 @@ module.exports = {
       return;
     }
     const multiplier = 1.0;
-    const participants = await dbAll(
-      "SELECT user_id FROM quiz_participants WHERE quiz_id = ?",
-      [quizId]
-    );
+    const participants = await db.QuizParticipant.findAll({
+      where: { quiz_id: quizId },
+      attributes: ["user_id"],
+    });
     const participantIds = participants.map((p) => p.user_id);
     console.log(
       `🔍 Debug: Fresh participants for scores: [${participantIds.join(
@@ -30,14 +29,18 @@ module.exports = {
 
     for (const ans of answers) {
       try {
+        // Auto-join via reaction answer (logic ban đầu)
         if (!participantIds.includes(ans.user_id)) {
           console.log(
-            `🔍 Debug: Auto-joining ${ans.user_id} (${ans.username})`
+            `🔍 Debug: Auto-joining ${ans.user_id} (${ans.username}) via reaction`
           );
-          await dbRun(
-            `INSERT OR IGNORE INTO quiz_participants (quiz_id, user_id, username, total_score, correct_answers) VALUES (?, ?, ?, 0, 0)`,
-            [quizId, ans.user_id, ans.username]
-          );
+          await db.QuizParticipant.upsert({
+            quiz_id: quizId,
+            user_id: ans.user_id,
+            username: ans.username,
+            total_score: 0,
+            correct_answers: 0,
+          });
           participantIds.push(ans.user_id);
         }
 
@@ -59,43 +62,33 @@ module.exports = {
           );
         }
 
-        await dbRun(
-          `INSERT INTO quiz_answers (quiz_id, question_id, question_number, user_id, answer, is_correct, time_taken, points_earned) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            quizId,
-            questionId,
-            questionNumber,
-            ans.user_id,
-            ans.answer,
-            isCorrect,
-            ans.time_taken,
-            points,
-          ]
-        );
-
-        const existing = await dbQuery(
-          "SELECT total_score, correct_answers FROM quiz_participants WHERE quiz_id = ? AND user_id = ?",
-          [quizId, ans.user_id]
-        );
-        if (existing) {
-          const newScore = existing.total_score + points;
-          const newCorrect = existing.correct_answers + isCorrect;
-          await dbRun(
-            `UPDATE quiz_participants SET total_score = ?, correct_answers = ?, username = ? WHERE quiz_id = ? AND user_id = ?`,
-            [newScore, newCorrect, ans.username, quizId, ans.user_id]
-          );
-          console.log(
-            `🔍 Debug: UPDATED score for ${ans.user_id}: ${newScore} total, ${newCorrect} correct`
-          );
-        } else {
-          await dbRun(
-            `INSERT INTO quiz_participants (quiz_id, user_id, username, total_score, correct_answers) VALUES (?, ?, ?, ?, ?)`,
-            [quizId, ans.user_id, ans.username, points, isCorrect]
-          );
-          console.log(
-            `🔍 Debug: INSERTED score for ${ans.user_id}: ${points} points, ${isCorrect} correct`
+        // Fix: Model create QuizAnswer (auto FK, no skip)
+        try {
+          await db.QuizAnswer.create({
+            quiz_id: quizId,
+            question_id: questionId,
+            question_number: questionNumber,
+            user_id: ans.user_id,
+            answer: ans.answer,
+            is_correct: isCorrect,
+            time_taken: ans.time_taken,
+            points_earned: points,
+          });
+          console.log(`✅ QuizAnswer saved for ${ans.user_id}`);
+        } catch (insertErr) {
+          console.error(
+            `⚠️ Skip answer insert for ${ans.user_id}: ${insertErr.message}. Score updated anyway.`
           );
         }
+
+        // Raw UPDATE score
+        await db.dbRun(
+          `UPDATE quiz_participants SET total_score = total_score + ?, correct_answers = correct_answers + ?, username = ? WHERE quiz_id = ? AND user_id = ?`,
+          [points, isCorrect, ans.username, quizId, ans.user_id]
+        );
+        console.log(
+          `🔍 Debug: UPDATED score for ${ans.user_id}: +${points} points, +${isCorrect} correct`
+        );
 
         logScore({
           quiz_id: quizId,
@@ -105,7 +98,7 @@ module.exports = {
           is_correct: isCorrect,
         });
       } catch (ansErr) {
-        console.error("Answer insert error:", ansErr);
+        console.error("Answer process error:", ansErr);
       }
     }
     console.log(
@@ -114,10 +107,12 @@ module.exports = {
   },
 
   calculateFinalStats: async (quizId, quiz, db) => {
-    const finalScores = await dbAll(
-      `SELECT p.user_id, p.username, p.total_score, p.correct_answers FROM quiz_participants p WHERE p.quiz_id = ? ORDER BY p.total_score DESC LIMIT 3`,
-      [quizId]
-    );
+    const finalScores = await db.QuizParticipant.findAll({
+      where: { quiz_id: quizId },
+      attributes: ["user_id", "username", "total_score", "correct_answers"],
+      order: [["total_score", "DESC"]],
+      limit: 3,
+    });
 
     if (finalScores.length === 0) {
       return {
@@ -128,12 +123,9 @@ module.exports = {
       };
     }
 
-    const totalParticipants = (
-      await dbQuery(
-        "SELECT COUNT(*) as count FROM quiz_participants WHERE quiz_id = ?",
-        [quizId]
-      )
-    ).count;
+    const totalParticipants = await db.QuizParticipant.count({
+      where: { quiz_id: quizId },
+    });
     const totalCorrect = finalScores.reduce(
       (sum, s) => sum + s.correct_answers,
       0
@@ -144,7 +136,7 @@ module.exports = {
             (totalCorrect / totalParticipants / quiz.questions_count) * 100 * 10
           ) / 10
         : 0;
-    const avgTimeRow = await dbQuery(
+    const avgTimeRow = await db.dbQuery(
       "SELECT AVG(time_taken) as avg_time FROM quiz_answers WHERE quiz_id = ?",
       [quizId]
     );

@@ -17,7 +17,6 @@ quizBot
 ├── package.json
 ├── src
 │   ├── commands
-│   │   ├── admin
 │   │   └── user
 │   │       └── quiz.js
 │   ├── data

@@ -79,7 +79,9 @@ module.exports = {
         }
         console.log(`🗑️ Removed reactions for ${user.id}`);
       } catch (removeErr) {
-        console.error(`Failed to remove reaction for ${user.id}:`, removeErr);
+        console.warn(
+          `⚠️ Failed to remove reaction for ${user.id}: ${removeErr.message}`
+        ); // Fix: Warn + continue
       }
 
       logAnswer({

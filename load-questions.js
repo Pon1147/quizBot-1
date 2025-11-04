@@ -15,10 +15,17 @@ function loadQuestionsFromJson(filename) {
     return;
   }
 
-  const questions = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  let questions = JSON.parse(fs.readFileSync(filePath, "utf8"));
+
+  // Fix category mismatch: Set to filename base (e.g., vehicles.json → "vehicles")
+  const categoryFromFile = filename.replace(".json", "");
+  questions = questions.map((q) => ({
+    ...q,
+    category: q.category || categoryFromFile,
+  }));
+
   console.log(
-    `🔍 Debug: Tìm thấy ${questions.length} questions. Sample structure:`,
-    JSON.stringify(questions[0], null, 2)
+    `Tìm thấy ${questions.length} questions (category: "${categoryFromFile}").`
   );
 
   const insertStmt = db.prepare(`
@@ -29,7 +36,7 @@ function loadQuestionsFromJson(filename) {
   let successCount = 0;
   let pending = questions.length;
 
-  questions.forEach((q, idx) => {
+  questions.forEach((q) => {
     const correctAns = (q.correct_answer || "").toUpperCase();
     const params = [
       q.category || "unknown",
@@ -42,27 +49,17 @@ function loadQuestionsFromJson(filename) {
       q.explanation || null,
       q.image_url || null,
     ];
-    console.log(
-      `🔍 Debug Q${idx + 1}: Params length=${
-        params.length
-      }, correctAns='${correctAns}'`
-    );
 
     insertStmt.run(params, (err) => {
       if (err) {
-        console.error(
-          `Lỗi insert Q${idx + 1}: ${err.message} | Params: ${JSON.stringify(
-            params
-          )}`
-        );
+        console.error(`Lỗi insert: ${err.message}`);
       } else {
         successCount++;
-        console.log(`✅ Inserted Q${idx + 1} OK`);
       }
       pending--;
       if (pending === 0) {
         console.log(
-          `✅ Đã load ${successCount}/${questions.length} questions thành công từ ${filename}`
+          `Đã load ${successCount}/${questions.length} questions thành công từ ${filename}`
         );
       }
     });
@@ -71,8 +68,6 @@ function loadQuestionsFromJson(filename) {
   insertStmt.finalize((err) => {
     if (err) {
       console.error("Finalize error:", err);
-    } else {
-      console.log(`🔄 Finalized inserts for ${filename}`); // THAY: Không cần commit, SQLite auto
     }
   });
 }
@@ -90,26 +85,26 @@ db.serialize(() => {
     explanation TEXT,
     image_url TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(category, question_text)  -- Đồng bộ với database.js
+    UNIQUE(category, question_text)
   )`);
 
-  // THÊM: Clear table để fresh load (comment nếu không muốn overwrite)
+  // Clear table để fresh load (dev mode)
   db.run("DELETE FROM questions");
-  db.run("VACUUM"); // Optional: Clean space
+  db.run("VACUUM");
 
   const jsonFiles = fs
     .readdirSync(QUESTIONS_DIR)
     .filter((f) => f.endsWith(".json"));
   jsonFiles.forEach(loadQuestionsFromJson);
 
-  // THÊM: Log total unique sau load
+  // Log total unique sau load
   db.get(
     "SELECT COUNT(DISTINCT question_text) as unique_count, COUNT(*) as total FROM questions",
     (err, row) => {
       if (err) console.error("Count error:", err);
       else
         console.log(
-          `🔍 Final DB: ${row.total} rows, ${row.unique_count} unique questions`
+          `Final DB: ${row.total} rows, ${row.unique_count} unique questions`
         );
     }
   );

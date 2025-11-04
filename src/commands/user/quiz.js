@@ -1,10 +1,9 @@
-const { SlashCommandBuilder } = require("discord.js");
+const { SlashCommandBuilder, MessageFlags } = require("discord.js");
 const { checkQuizPerms } = require("../../utils/permissions");
 const {
   createQuiz,
   startQuiz,
   stopQuiz,
-  joinQuiz,
 } = require("../../services/quizManager");
 const config = require("../../../config.json");
 
@@ -65,24 +64,13 @@ module.exports = {
     )
     .addSubcommand((subcommand) =>
       subcommand.setName("stop").setDescription("Dừng quiz đang chạy")
-    )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName("join")
-        .setDescription("Tham gia quiz đang chạy")
-        .addStringOption((option) =>
-          option
-            .setName("quiz_id")
-            .setDescription("ID quiz cần join (từ /create)")
-            .setRequired(true)
-        )
     ),
   async execute(interaction) {
     const subcommand = interaction.options.getSubcommand(true);
     console.log(`🔄 Executing subcommand: ${subcommand}`);
 
     try {
-      await interaction.deferReply({ ephemeral: false });
+      await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
 
       const hasPerms = await checkQuizPerms(interaction);
 
@@ -128,24 +116,18 @@ module.exports = {
         return;
       }
 
-      if (subcommand === "join") {
-        const quizId = interaction.options.getString("quiz_id");
-        await joinQuiz(interaction, quizId);
-        return;
-      }
-
       throw new Error(`Subcommand ${subcommand} không hỗ trợ!`);
     } catch (error) {
       console.error(`❌ Execute error for ${subcommand}:`, error);
       if (interaction.deferred) {
         await interaction.editReply({
           content: `❌ Lỗi ${subcommand}: ${error.message}`,
-          ephemeral: true,
+          flags: [MessageFlags.Ephemeral],
         });
       } else {
         await interaction.reply({
           content: `❌ Lỗi ${subcommand}: ${error.message}`,
-          ephemeral: true,
+          flags: [MessageFlags.Ephemeral],
         });
       }
     }

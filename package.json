@@ -8,7 +8,8 @@
     "winston-daily-rotate-file": "^5.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10"
+    "nodemon": "^3.1.10",
+    "sequelize-cli": "^6.6.2"
   },
   "scripts": {
     "start": "node src/index.js",
@@ -16,6 +17,7 @@
     "deploy": "node src/deploy-commands.js",
     "test": "node src/test.js",
     "migrate": "sequelize-cli db:migrate",
-    "load-data": "node load-questions.js"
+    "load-data": "node load-questions.js",
+    "load:check": "node check-db.js"
   }
 }

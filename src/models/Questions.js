@@ -44,7 +44,7 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.STRING,
       },
       created_at: {
-        type: DataTypes.DATE,
+        type: DataTypes.DATE, // DATETIME in SQLite
         defaultValue: DataTypes.NOW,
       },
     },

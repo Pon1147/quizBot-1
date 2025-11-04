@@ -11,60 +11,39 @@ console.log(
 );
 const fs = require("fs");
 const path = require("path");
-const {
-  Client,
-  Collection,
-  GatewayIntentBits,
-  REST,
-  Routes,
-} = require("discord.js");
-const { initDatabase } = require("./src/utils/database");
-const config = require("./config.json");
+const { Client, Collection, GatewayIntentBits } = require("discord.js");
+const { initDatabase } = require("./utils/database");
+const config = require("../config.json");
 const { initManager } = require("./services/quizManager");
-initManager().catch(console.error);
 
-// Debug: Log token status
-console.log(
-  "🔧 Starting bot... Token loaded:",
-  process.env.DISCORD_TOKEN ? "YES" : "NO"
-);
-console.log("🔧 DB init...");
-initDatabase(); // Init DB early (legacy nếu cần)
-
-(async () => {
-  try {
-    await initManager(); // Init QuizManager với Sequelize
-    console.log("✅ QuizManager initialized.");
-  } catch (err) {
-    console.error("❌ Failed to init QuizManager:", err);
-    process.exit(1);
-  }
-})();
-
-// Client setup
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMessageReactions,
-    GatewayIntentBits.GuildMembers, // Thêm để award roles
+    GatewayIntentBits.GuildMembers,
   ],
 });
 
-// Collections
 client.commands = new Collection();
-client.commandArray = []; // For deploy
+client.commandArray = [];
 
-// Load commands
-const commandsPath = path.join(__dirname, "src/commands");
+// Load commands (skip sub files, chỉ load main quiz.js)
+const commandsPath = path.join(__dirname, "commands");
 if (fs.existsSync(commandsPath)) {
   const commandFolders = fs.readdirSync(commandsPath);
   for (const folder of commandFolders) {
     const folderPath = path.join(commandsPath, folder);
     const commandFiles = fs
       .readdirSync(folderPath)
-      .filter((file) => file.endsWith(".js"));
+      .filter(
+        (file) =>
+          file.endsWith(".js") &&
+          file !== "create.js" &&
+          file !== "start.js" &&
+          file !== "stop.js"
+      ); // Skip subs
     for (const file of commandFiles) {
       const filePath = path.join(folderPath, file);
       const command = require(filePath);
@@ -75,7 +54,7 @@ if (fs.existsSync(commandsPath)) {
 }
 
 // Load events
-const eventsPath = path.join(__dirname, "src/events");
+const eventsPath = path.join(__dirname, "events");
 if (fs.existsSync(eventsPath)) {
   const eventFiles = fs
     .readdirSync(eventsPath)
@@ -97,7 +76,7 @@ process.on("unhandledRejection", (reason) =>
   console.log("Unhandled Rejection:", reason)
 );
 
-// FULL INTERACTION HANDLER: Log + Execute command
+// INTERACTION HANDLER
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
@@ -135,20 +114,37 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
 
-// Login
-client
-  .login(process.env.DISCORD_TOKEN)
-  .then(() => {
-    console.log(`✅ Logged in as ${client.user.tag}!`);
-    client.user.setActivity(config.bot.status, { type: "PLAYING" });
-  })
-  .catch((error) => {
-    console.error("❌ Login failed:", error.message);
-    if (error.message.includes("Invalid Token")) {
-      console.error("🔧 Fix: Check DISCORD_TOKEN in .env");
-    }
-    process.exit(1); // Exit nếu fail
-  });
+// Main async init
+(async () => {
+  try {
+    console.log(
+      "🔧 Starting bot... Token loaded:",
+      process.env.DISCORD_TOKEN ? "YES" : "NO"
+    );
+    console.log("🔧 DB init...");
+    await initDatabase();
+    console.log("✅ Database initialized.");
+    await initManager();
+    console.log("✅ QuizManager initialized.");
+  } catch (err) {
+    console.error("❌ Init failed:", err);
+    process.exit(1);
+  }
+
+  client
+    .login(process.env.DISCORD_TOKEN)
+    .then(() => {
+      console.log(`✅ Logged in as ${client.user.tag}!`);
+      client.user.setActivity(config.bot.status, { type: "PLAYING" });
+    })
+    .catch((error) => {
+      console.error("❌ Login failed:", error.message);
+      if (error.message.includes("Invalid Token")) {
+        console.error("🔧 Fix: Check DISCORD_TOKEN in .env");
+      }
+      process.exit(1);
+    });
+})();
 
 // Graceful shutdown
 process.on("SIGINT", () => {
