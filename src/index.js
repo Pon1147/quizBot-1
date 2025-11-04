@@ -15,6 +15,7 @@ const { Client, Collection, GatewayIntentBits } = require("discord.js");
 const { initDatabase } = require("./utils/database");
 const config = require("../config.json");
 const { initManager } = require("./services/quizManager");
+const { startHealthCheckServer } = require("./healthServer"); // Patch cho Render: Health check server
 
 const client = new Client({
   intents: [
@@ -130,6 +131,9 @@ client.on("interactionCreate", async (interaction) => {
     .then(() => {
       console.log(`✅ Logged in as ${client.user.tag}!`);
       client.user.setActivity(config.bot.status, { type: "PLAYING" });
+
+      // Patch cho Render: Start health server sau login thành công
+      const healthApp = startHealthCheckServer(client);
     })
     .catch((error) => {
       console.error("❌ Login failed:", error.message);
