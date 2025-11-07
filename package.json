@@ -17,8 +17,9 @@
     "dev": "nodemon --verbose src/index.js",
     "deploy": "node src/deploy-commands.js",
     "test": "node src/test.js",
-    "migrate": "sequelize-cli db:migrate",
+    "migrate": "node migrate-db.js",
     "load-data": "node load-questions.js",
-    "load:check": "node check-db.js"
+    "load:check": "node check-db.js",
+    "build:render": "npm run migrate && npm run load-data"
   }
 }

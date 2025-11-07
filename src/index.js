@@ -11,7 +11,13 @@ console.log(
 );
 const fs = require("fs");
 const path = require("path");
-const { Client, Collection, GatewayIntentBits } = require("discord.js");
+const {
+  Client,
+  Collection,
+  GatewayIntentBits,
+  REST,
+  Routes,
+} = require("discord.js");
 const { initDatabase } = require("./utils/database");
 const config = require("../config.json");
 const { initManager } = require("./services/quizManager");
@@ -128,9 +134,27 @@ client.on("interactionCreate", async (interaction) => {
 
   client
     .login(process.env.DISCORD_TOKEN)
-    .then(() => {
+    .then(async () => {
       console.log(`✅ Logged in as ${client.user.tag}!`);
       client.user.setActivity(config.bot.status, { type: "PLAYING" });
+
+      // Auto-deploy commands sau login (chỉ 1 lần, check sync)
+      try {
+        const rest = new REST({ version: "10" }).setToken(
+          process.env.DISCORD_TOKEN
+        );
+        await rest.put(Routes.applicationCommands(client.user.id), {
+          body: client.commandArray,
+        });
+        console.log("✅ Commands deployed globally.");
+      } catch (deployErr) {
+        if (deployErr.code === 30007) {
+          // Commands already registered
+          console.log("ℹ️ Commands already up-to-date.");
+        } else {
+          console.error("❌ Deploy failed:", deployErr);
+        }
+      }
 
       // Patch cho Render: Start health server sau login thành công
       const healthApp = startHealthCheckServer(client);
